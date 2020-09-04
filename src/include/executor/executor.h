@@ -190,6 +190,24 @@ extern void InitResultRelInfo(ResultRelInfo *resultRelInfo,
 							  Index resultRelationIndex,
 							  Relation partition_root,
 							  int instrument_options);
+extern void ResultRelInitModifyState(ResultRelInfo *resultRelInfo);
+
+/*
+ * Returns modify state for the result relation
+ * If modify state is not initialized yet, it is initialized
+ *
+ * Callers must call `ResultRelEndModify` to close modify state,
+ * initialized by this function.
+ */
+static inline struct TableModifyState *
+ResultRelGetModifyState(ResultRelInfo *resultRelInfo)
+{
+	if (!resultRelInfo->ri_ModifyState)
+		ResultRelInitModifyState(resultRelInfo);
+	return resultRelInfo->ri_ModifyState;
+}
+
+extern void ResultRelEndModify(ResultRelInfo *resultRelInfo);
 extern ResultRelInfo *ExecGetTriggerResultRel(EState *estate, Oid relid);
 extern void ExecCleanUpTriggerState(EState *estate);
 extern void ExecConstraints(ResultRelInfo *resultRelInfo,

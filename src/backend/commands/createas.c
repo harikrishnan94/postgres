@@ -61,6 +61,7 @@ typedef struct
 	CommandId	output_cid;		/* cmin to insert in output tuples */
 	int			ti_options;		/* table_tuple_insert performance options */
 	BulkInsertState bistate;	/* bulk insert state */
+	TableModifyState *mstate;	/* table modify state */
 } DR_intorel;
 
 /* utility functions for CTAS definition creation */
@@ -553,6 +554,7 @@ intorel_startup(DestReceiver *self, int operation, TupleDesc typeinfo)
 	myState->output_cid = GetCurrentCommandId(true);
 	myState->ti_options = TABLE_INSERT_SKIP_FSM;
 	myState->bistate = GetBulkInsertState();
+	myState->mstate = table_begin_modify(myState->rel);
 
 	/*
 	 * Valid smgr_targblock implies something already wrote to the relation.
@@ -578,7 +580,7 @@ intorel_receive(TupleTableSlot *slot, DestReceiver *self)
 	 * tuple's xmin), but since we don't do that here...
 	 */
 
-	table_tuple_insert(myState->rel,
+	table_tuple_insert(myState->mstate,
 					   slot,
 					   myState->output_cid,
 					   myState->ti_options,
@@ -599,7 +601,8 @@ intorel_shutdown(DestReceiver *self)
 
 	FreeBulkInsertState(myState->bistate);
 
-	table_finish_bulk_insert(myState->rel, myState->ti_options);
+	table_finish_bulk_insert(myState->mstate, myState->ti_options);
+	table_end_modify(myState->mstate);
 
 	/* close rel, but keep lock until commit */
 	table_close(myState->rel, NoLock);

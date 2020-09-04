@@ -2065,9 +2065,10 @@ heap_prepare_insert(Relation relation, HeapTuple tup, TransactionId xid,
  * temporary context before calling this, if that's a problem.
  */
 void
-heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
+heap_multi_insert(TableModifyState *mstate, TupleTableSlot **slots, int ntuples,
 				  CommandId cid, int options, BulkInsertState bistate)
 {
+	Relation	relation = mstate->rel;
 	TransactionId xid = GetCurrentTransactionId();
 	HeapTuple  *heaptuples;
 	int			i;
@@ -2824,6 +2825,7 @@ simple_heap_delete(Relation relation, ItemPointer tid)
 						 GetCurrentCommandId(true), InvalidSnapshot,
 						 true /* wait for commit */ ,
 						 &tmfd, false /* changingPart */ );
+
 	switch (result)
 	{
 		case TM_SelfModified:

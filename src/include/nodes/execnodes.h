@@ -41,6 +41,7 @@ struct ExprContext;
 struct RangeTblEntry;			/* avoid including parsenodes.h here */
 struct ExprEvalStep;			/* avoid including execExpr.h everywhere */
 struct CopyMultiInsertBuffer;
+struct TableModifyState;
 
 
 /* ----------------
@@ -427,6 +428,9 @@ typedef struct ResultRelInfo
 	/* cached lookup info for trigger functions */
 	FmgrInfo   *ri_TrigFunctions;
 
+	/* modify state for the relation */
+	struct TableModifyState *ri_ModifyState;
+
 	/* array of trigger WHEN expr states */
 	ExprState **ri_TrigWhenExprs;
 
@@ -625,6 +629,7 @@ typedef struct EState
 typedef struct ExecRowMark
 {
 	Relation	relation;		/* opened and suitably locked relation */
+	struct TableModifyState *mstate;	/* Modify state for the above relation */
 	Oid			relid;			/* its OID (or InvalidOid, if subquery) */
 	Index		rti;			/* its range table index */
 	Index		prti;			/* parent range table index, if child */
@@ -2112,7 +2117,7 @@ typedef struct AggregateInstrumentation
 	Size		hash_mem_peak;	/* peak hash table memory usage */
 	uint64		hash_disk_used; /* kB of disk space used */
 	int			hash_batches_used;	/* batches used during entire execution */
-} AggregateInstrumentation;
+}			AggregateInstrumentation;
 
 /* ----------------
  *	 Shared memory container for per-worker aggregate information
@@ -2122,7 +2127,7 @@ typedef struct SharedAggInfo
 {
 	int			num_workers;
 	AggregateInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedAggInfo;
+}			SharedAggInfo;
 
 /* ---------------------
  *	AggState information
@@ -2469,6 +2474,7 @@ typedef struct LockRowsState
 	PlanState	ps;				/* its first field is NodeTag */
 	List	   *lr_arowMarks;	/* List of ExecAuxRowMarks */
 	EPQState	lr_epqstate;	/* for evaluating EvalPlanQual rechecks */
+	List	   *lr_all_rowmarks;	/* List of all RowMarks */
 } LockRowsState;
 
 /* ----------------

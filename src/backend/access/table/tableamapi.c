@@ -68,6 +68,8 @@ GetTableAmRoutine(Oid amhandler)
 	Assert(routine->tuple_satisfies_snapshot != NULL);
 	Assert(routine->compute_xid_horizon_for_tuples != NULL);
 
+	Assert(routine->modify_begin != NULL);
+	Assert(routine->modify_end != NULL);
 	Assert(routine->tuple_insert != NULL);
 
 	/*

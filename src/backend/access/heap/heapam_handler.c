@@ -236,10 +236,26 @@ heapam_tuple_satisfies_snapshot(Relation rel, TupleTableSlot *slot,
  * ----------------------------------------------------------------------------
  */
 
+static TableModifyState *
+heapam_begin_modify(Relation rel)
+{
+	TableModifyState *mstate = palloc0fast(sizeof(TableModifyState));
+
+	mstate->rel = rel;
+	return mstate;
+}
+
 static void
-heapam_tuple_insert(Relation relation, TupleTableSlot *slot, CommandId cid,
+heapam_end_modify(TableModifyState *mstate)
+{
+	pfree(mstate);
+}
+
+static void
+heapam_tuple_insert(TableModifyState *mstate, TupleTableSlot *slot, CommandId cid,
 					int options, BulkInsertState bistate)
 {
+	Relation	relation = mstate->rel;
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 
@@ -256,10 +272,11 @@ heapam_tuple_insert(Relation relation, TupleTableSlot *slot, CommandId cid,
 }
 
 static void
-heapam_tuple_insert_speculative(Relation relation, TupleTableSlot *slot,
+heapam_tuple_insert_speculative(TableModifyState *mstate, TupleTableSlot *slot,
 								CommandId cid, int options,
 								BulkInsertState bistate, uint32 specToken)
 {
+	Relation	relation = mstate->rel;
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 
@@ -279,9 +296,10 @@ heapam_tuple_insert_speculative(Relation relation, TupleTableSlot *slot,
 }
 
 static void
-heapam_tuple_complete_speculative(Relation relation, TupleTableSlot *slot,
+heapam_tuple_complete_speculative(TableModifyState *mstate, TupleTableSlot *slot,
 								  uint32 specToken, bool succeeded)
 {
+	Relation	relation = mstate->rel;
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 
@@ -296,7 +314,7 @@ heapam_tuple_complete_speculative(Relation relation, TupleTableSlot *slot,
 }
 
 static TM_Result
-heapam_tuple_delete(Relation relation, ItemPointer tid, CommandId cid,
+heapam_tuple_delete(TableModifyState *mstate, ItemPointer tid, CommandId cid,
 					Snapshot snapshot, Snapshot crosscheck, bool wait,
 					TM_FailureData *tmfd, bool changingPart)
 {
@@ -305,16 +323,18 @@ heapam_tuple_delete(Relation relation, ItemPointer tid, CommandId cid,
 	 * the storage itself is cleaning the dead tuples by itself, it is the
 	 * time to call the index tuple deletion also.
 	 */
-	return heap_delete(relation, tid, cid, crosscheck, wait, tmfd, changingPart);
+	return heap_delete(mstate->rel, tid, cid, crosscheck, wait, tmfd,
+					   changingPart);
 }
 
 
 static TM_Result
-heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
+heapam_tuple_update(TableModifyState *mstate, ItemPointer otid, TupleTableSlot *slot,
 					CommandId cid, Snapshot snapshot, Snapshot crosscheck,
 					bool wait, TM_FailureData *tmfd,
 					LockTupleMode *lockmode, bool *update_indexes)
 {
+	Relation	relation = mstate->rel;
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 	TM_Result	result;
@@ -344,11 +364,12 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 }
 
 static TM_Result
-heapam_tuple_lock(Relation relation, ItemPointer tid, Snapshot snapshot,
+heapam_tuple_lock(TableModifyState *mstate, ItemPointer tid, Snapshot snapshot,
 				  TupleTableSlot *slot, CommandId cid, LockTupleMode mode,
 				  LockWaitPolicy wait_policy, uint8 flags,
 				  TM_FailureData *tmfd)
 {
+	Relation	relation = mstate->rel;
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
 	TM_Result	result;
 	Buffer		buffer;
@@ -1630,13 +1651,13 @@ heapam_index_build_range_scan(Relation heapRelation,
 			offnum = ItemPointerGetOffsetNumber(&heapTuple->t_self);
 
 			/*
-			 * If a HOT tuple points to a root that we don't know
-			 * about, obtain root items afresh.  If that still fails,
-			 * report it as corruption.
+			 * If a HOT tuple points to a root that we don't know about,
+			 * obtain root items afresh.  If that still fails, report it as
+			 * corruption.
 			 */
 			if (root_offsets[offnum - 1] == InvalidOffsetNumber)
 			{
-				Page	page = BufferGetPage(hscan->rs_cbuf);
+				Page		page = BufferGetPage(hscan->rs_cbuf);
 
 				LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_SHARE);
 				heap_get_root_tuples(page, root_offsets);
@@ -2523,6 +2544,8 @@ static const TableAmRoutine heapam_methods = {
 	.index_fetch_end = heapam_index_fetch_end,
 	.index_fetch_tuple = heapam_index_fetch_tuple,
 
+	.modify_begin = heapam_begin_modify,
+	.modify_end = heapam_end_modify,
 	.tuple_insert = heapam_tuple_insert,
 	.tuple_insert_speculative = heapam_tuple_insert_speculative,
 	.tuple_complete_speculative = heapam_tuple_complete_speculative,

@@ -2961,6 +2961,7 @@ GetTupleForTrigger(EState *estate,
 		TM_Result	test;
 		TM_FailureData tmfd;
 		int			lockflags = 0;
+		TableModifyState *mstate = ResultRelGetModifyState(relinfo);
 
 		*epqslot = NULL;
 
@@ -2972,7 +2973,7 @@ GetTupleForTrigger(EState *estate,
 		 */
 		if (!IsolationUsesXactSnapshot())
 			lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
-		test = table_tuple_lock(relation, tid, estate->es_snapshot, oldslot,
+		test = table_tuple_lock(mstate, tid, estate->es_snapshot, oldslot,
 								estate->es_output_cid,
 								lockmode, LockWaitBlock,
 								lockflags,

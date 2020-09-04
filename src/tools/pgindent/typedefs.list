@@ -2414,6 +2414,7 @@ TBMStatus
 TBlockState
 TIDBitmap
 TM_FailureData
+TM_Kind
 TM_Result
 TOKEN_DEFAULT_DACL
 TOKEN_INFORMATION_CLASS
@@ -2466,6 +2467,7 @@ TableFuncScan
 TableFuncScanState
 TableInfo
 TableLikeClause
+TableModifyState
 TableSampleClause
 TableScanDesc
 TableScanDescData

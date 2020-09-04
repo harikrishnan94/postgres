@@ -447,6 +447,7 @@ ExecInsert(ModifyTableState *mtstate,
 	else
 	{
 		WCOKind		wco_kind;
+		TableModifyState *mstate = ResultRelGetModifyState(resultRelInfo);
 
 		/*
 		 * Constraints might reference the tableoid column, so (re-)initialize
@@ -575,7 +576,7 @@ ExecInsert(ModifyTableState *mtstate,
 			specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
 
 			/* insert the tuple, with the speculative token */
-			table_tuple_insert_speculative(resultRelationDesc, slot,
+			table_tuple_insert_speculative(mstate, slot,
 										   estate->es_output_cid,
 										   0,
 										   NULL,
@@ -587,7 +588,7 @@ ExecInsert(ModifyTableState *mtstate,
 												   arbiterIndexes);
 
 			/* adjust the tuple's state accordingly */
-			table_tuple_complete_speculative(resultRelationDesc, slot,
+			table_tuple_complete_speculative(mstate, slot,
 											 specToken, !specConflict);
 
 			/*
@@ -615,7 +616,7 @@ ExecInsert(ModifyTableState *mtstate,
 		else
 		{
 			/* insert the tuple normally */
-			table_tuple_insert(resultRelationDesc, slot,
+			table_tuple_insert(mstate, slot,
 							   estate->es_output_cid,
 							   0, NULL);
 
@@ -787,6 +788,8 @@ ExecDelete(ModifyTableState *mtstate,
 	}
 	else
 	{
+		TableModifyState *mstate = ResultRelGetModifyState(resultRelInfo);
+
 		/*
 		 * delete the tuple
 		 *
@@ -797,7 +800,7 @@ ExecDelete(ModifyTableState *mtstate,
 		 * mode transactions.
 		 */
 ldelete:;
-		result = table_tuple_delete(resultRelationDesc, tupleid,
+		result = table_tuple_delete(mstate, tupleid,
 									estate->es_output_cid,
 									estate->es_snapshot,
 									estate->es_crosscheck_snapshot,
@@ -863,7 +866,7 @@ ldelete:;
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_tuple_lock(resultRelationDesc, tupleid,
+					result = table_tuple_lock(mstate, tupleid,
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  LockTupleExclusive, LockWaitBlock,
@@ -1145,6 +1148,7 @@ ExecUpdate(ModifyTableState *mtstate,
 		LockTupleMode lockmode;
 		bool		partition_constraint_failed;
 		bool		update_indexes;
+		TableModifyState *mstate = ResultRelGetModifyState(resultRelInfo);
 
 		/*
 		 * Constraints might reference the tableoid column, so (re-)initialize
@@ -1340,7 +1344,7 @@ lreplace:;
 		 * needed for referential integrity updates in transaction-snapshot
 		 * mode transactions.
 		 */
-		result = table_tuple_update(resultRelationDesc, tupleid, slot,
+		result = table_tuple_update(mstate, tupleid, slot,
 									estate->es_output_cid,
 									estate->es_snapshot,
 									estate->es_crosscheck_snapshot,
@@ -1403,7 +1407,7 @@ lreplace:;
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_tuple_lock(resultRelationDesc, tupleid,
+					result = table_tuple_lock(mstate, tupleid,
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  lockmode, LockWaitBlock,
@@ -1535,6 +1539,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 	Relation	relation = resultRelInfo->ri_RelationDesc;
 	ExprState  *onConflictSetWhere = resultRelInfo->ri_onConflict->oc_WhereClause;
 	TupleTableSlot *existing = resultRelInfo->ri_onConflict->oc_Existing;
+	TableModifyState *mstate = ResultRelGetModifyState(resultRelInfo);
 	TM_FailureData tmfd;
 	LockTupleMode lockmode;
 	TM_Result	test;
@@ -1551,7 +1556,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 	 * previous conclusion that the tuple is conclusively committed is not
 	 * true anymore.
 	 */
-	test = table_tuple_lock(relation, conflictTid,
+	test = table_tuple_lock(mstate, conflictTid,
 							estate->es_snapshot,
 							existing, estate->es_output_cid,
 							lockmode, LockWaitBlock, 0,
@@ -2762,13 +2767,19 @@ ExecEndModifyTable(ModifyTableState *node)
 {
 	int			i;
 
-	/*
-	 * Allow any FDWs to shut down
-	 */
+	if (node->rootResultRelInfo && node->rootResultRelInfo->ri_ModifyState)
+		table_end_modify(node->rootResultRelInfo->ri_ModifyState);
+
 	for (i = 0; i < node->mt_nplans; i++)
 	{
 		ResultRelInfo *resultRelInfo = node->resultRelInfo + i;
 
+		/* Close Table Modify State */
+		ResultRelEndModify(resultRelInfo);
+
+		/*
+		 * Allow any FDWs to shut down
+		 */
 		if (!resultRelInfo->ri_usesFdwDirectModify &&
 			resultRelInfo->ri_FdwRoutine != NULL &&
 			resultRelInfo->ri_FdwRoutine->EndForeignModify != NULL)

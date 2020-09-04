@@ -179,7 +179,7 @@ lnext:
 		if (!IsolationUsesXactSnapshot())
 			lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
 
-		test = table_tuple_lock(erm->relation, &tid, estate->es_snapshot,
+		test = table_tuple_lock(erm->mstate, &tid, estate->es_snapshot,
 								markSlot, estate->es_output_cid,
 								lockmode, erm->waitPolicy,
 								lockflags,
@@ -337,6 +337,7 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	 * built the global list of ExecRowMarks.)
 	 */
 	lrstate->lr_arowMarks = NIL;
+	lrstate->lr_all_rowmarks = NIL;
 	epq_arowmarks = NIL;
 	foreach(lc, node->rowMarks)
 	{
@@ -351,6 +352,8 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 		/* find ExecRowMark and build ExecAuxRowMark */
 		erm = ExecFindRowMark(estate, rc->rti, false);
 		aerm = ExecBuildAuxRowMark(erm, outerPlan->targetlist);
+
+		lrstate->lr_all_rowmarks = lappend(lrstate->lr_all_rowmarks, erm);
 
 		/*
 		 * Only locking rowmarks go into our own list.  Non-locking marks are
@@ -381,6 +384,16 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 void
 ExecEndLockRows(LockRowsState *node)
 {
+	ListCell   *lc;
+
+	/* End all row mark's modify state */
+	foreach(lc, node->lr_all_rowmarks)
+	{
+		ExecRowMark *erm = lfirst(lc);
+
+		table_end_modify(erm->mstate);
+	}
+
 	EvalPlanQualEnd(&node->lr_epqstate);
 	ExecEndNode(outerPlanState(node));
 }

@@ -5165,6 +5165,7 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 	BulkInsertState bistate;
 	int			ti_options;
 	ExprState  *partqualstate = NULL;
+	TableModifyState *newrelmstate;
 
 	/*
 	 * Open the relation(s).  We have surely already locked the existing
@@ -5175,9 +5176,14 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 	newTupDesc = RelationGetDescr(oldrel);	/* includes all mods */
 
 	if (OidIsValid(OIDNewHeap))
+	{
 		newrel = table_open(OIDNewHeap, lockmode);
+		newrelmstate = table_begin_modify(newrel);
+	}
 	else
+	{
 		newrel = NULL;
+	}
 
 	/*
 	 * Prepare a BulkInsertState and options for table_tuple_insert.  The FSM
@@ -5489,7 +5495,7 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 
 			/* Write the tuple out to the new relation */
 			if (newrel)
-				table_tuple_insert(newrel, insertslot, mycid,
+				table_tuple_insert(newrelmstate, insertslot, mycid,
 								   ti_options, bistate);
 
 			ResetExprContext(econtext);
@@ -5513,7 +5519,8 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 	{
 		FreeBulkInsertState(bistate);
 
-		table_finish_bulk_insert(newrel, ti_options);
+		table_finish_bulk_insert(newrelmstate, ti_options);
+		table_end_modify(newrelmstate);
 
 		table_close(newrel, NoLock);
 	}

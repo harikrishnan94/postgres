@@ -2438,6 +2438,7 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	int			nused = buffer->nused;
 	ResultRelInfo *resultRelInfo = buffer->resultRelInfo;
 	TupleTableSlot **slots = buffer->slots;
+	TableModifyState *mstate = ResultRelGetModifyState(buffer->resultRelInfo);
 
 	/* Set es_result_relation_info to the ResultRelInfo we're flushing. */
 	estate->es_result_relation_info = resultRelInfo;
@@ -2454,7 +2455,7 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	 * context before calling it.
 	 */
 	oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-	table_multi_insert(resultRelInfo->ri_RelationDesc,
+	table_multi_insert(mstate,
 					   slots,
 					   nused,
 					   mycid,
@@ -2516,6 +2517,7 @@ CopyMultiInsertBufferCleanup(CopyMultiInsertInfo *miinfo,
 							 CopyMultiInsertBuffer *buffer)
 {
 	int			i;
+	TableModifyState *mstate = ResultRelGetModifyState(buffer->resultRelInfo);
 
 	/* Ensure buffer was flushed */
 	Assert(buffer->nused == 0);
@@ -2529,9 +2531,9 @@ CopyMultiInsertBufferCleanup(CopyMultiInsertInfo *miinfo,
 	for (i = 0; i < MAX_BUFFERED_TUPLES && buffer->slots[i] != NULL; i++)
 		ExecDropSingleTupleTableSlot(buffer->slots[i]);
 
-	table_finish_bulk_insert(buffer->resultRelInfo->ri_RelationDesc,
+	table_finish_bulk_insert(mstate,
 							 miinfo->ti_options);
-
+	table_end_modify(mstate);
 	pfree(buffer);
 }
 
@@ -3238,7 +3240,7 @@ CopyFrom(CopyState cstate)
 					else
 					{
 						/* OK, store the tuple and create index entries for it */
-						table_tuple_insert(resultRelInfo->ri_RelationDesc,
+						table_tuple_insert(ResultRelGetModifyState(resultRelInfo),
 										   myslot, mycid, ti_options, bistate);
 
 						if (resultRelInfo->ri_NumIndices > 0)
@@ -3305,6 +3307,9 @@ CopyFrom(CopyState cstate)
 	/* Tear down the multi-insert buffer data */
 	if (insertMethod != CIM_SINGLE)
 		CopyMultiInsertInfoCleanup(&multiInsertInfo);
+
+	if (target_resultRelInfo->ri_ModifyState)
+		table_end_modify(target_resultRelInfo->ri_ModifyState);
 
 	ExecCloseIndices(target_resultRelInfo);
 

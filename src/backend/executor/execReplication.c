@@ -171,16 +171,19 @@ retry:
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
+		TableModifyState *mstate;
 
 		PushActiveSnapshot(GetLatestSnapshot());
 
-		res = table_tuple_lock(rel, &(outslot->tts_tid), GetLatestSnapshot(),
+		mstate = table_begin_modify(rel);
+		res = table_tuple_lock(mstate, &(outslot->tts_tid), GetLatestSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
 							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
+		table_end_modify(mstate);
 
 		PopActiveSnapshot();
 
@@ -348,16 +351,19 @@ retry:
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
+		TableModifyState *mstate;
 
 		PushActiveSnapshot(GetLatestSnapshot());
 
-		res = table_tuple_lock(rel, &(outslot->tts_tid), GetLatestSnapshot(),
+		mstate = table_begin_modify(rel);
+		res = table_tuple_lock(mstate, &(outslot->tts_tid), GetLatestSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
 							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
+		table_end_modify(mstate);
 
 		PopActiveSnapshot();
 
@@ -439,7 +445,7 @@ ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot)
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
 		/* OK, store the tuple and create index entries for it */
-		simple_table_tuple_insert(resultRelInfo->ri_RelationDesc, slot);
+		simple_table_tuple_insert(ResultRelGetModifyState(resultRelInfo), slot);
 
 		if (resultRelInfo->ri_NumIndices > 0)
 			recheckIndexes = ExecInsertIndexTuples(slot, estate, false, NULL,
@@ -504,8 +510,8 @@ ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
 		if (resultRelInfo->ri_PartitionCheck)
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
-		simple_table_tuple_update(rel, tid, slot, estate->es_snapshot,
-								  &update_indexes);
+		simple_table_tuple_update(ResultRelGetModifyState(resultRelInfo), tid,
+								  slot, estate->es_snapshot, &update_indexes);
 
 		if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
 			recheckIndexes = ExecInsertIndexTuples(slot, estate, false, NULL,
@@ -549,7 +555,8 @@ ExecSimpleRelationDelete(EState *estate, EPQState *epqstate,
 	if (!skip_tuple)
 	{
 		/* OK, delete the tuple */
-		simple_table_tuple_delete(rel, tid, estate->es_snapshot);
+		simple_table_tuple_delete(ResultRelGetModifyState(resultRelInfo), tid,
+								  estate->es_snapshot);
 
 		/* AFTER ROW DELETE Triggers */
 		ExecARDeleteTriggers(estate, resultRelInfo,

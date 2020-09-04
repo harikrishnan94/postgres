@@ -63,6 +63,14 @@ typedef enum ScanOptions
 } ScanOptions;
 
 /*
+ * Common State for table modification which can be extended by AM's
+ */
+typedef struct TableModifyState
+{
+	Relation	rel;
+} TableModifyState;
+
+/*
  * Result codes for table_{update,delete,lock_tuple}, and for visibility
  * routines inside table AMs.
  */
@@ -352,13 +360,20 @@ typedef struct TableAmRoutine
 	 * ------------------------------------------------------------------------
 	 */
 
+	/* Optional preparation before for modifying the relation */
+	TableModifyState *(*modify_begin) (Relation rel);
+
+	/* Optional teardown after modifying the relation */
+	void		(*modify_end) (TableModifyState *mstate);
+
 	/* see table_tuple_insert() for reference about parameters */
-	void		(*tuple_insert) (Relation rel, TupleTableSlot *slot,
+	void		(*tuple_insert) (TableModifyState *mstate,
+								 TupleTableSlot *slot,
 								 CommandId cid, int options,
 								 struct BulkInsertStateData *bistate);
 
 	/* see table_tuple_insert_speculative() for reference about parameters */
-	void		(*tuple_insert_speculative) (Relation rel,
+	void		(*tuple_insert_speculative) (TableModifyState *mstate,
 											 TupleTableSlot *slot,
 											 CommandId cid,
 											 int options,
@@ -366,17 +381,19 @@ typedef struct TableAmRoutine
 											 uint32 specToken);
 
 	/* see table_tuple_complete_speculative() for reference about parameters */
-	void		(*tuple_complete_speculative) (Relation rel,
+	void		(*tuple_complete_speculative) (TableModifyState *mstate,
 											   TupleTableSlot *slot,
 											   uint32 specToken,
 											   bool succeeded);
 
 	/* see table_multi_insert() for reference about parameters */
-	void		(*multi_insert) (Relation rel, TupleTableSlot **slots, int nslots,
-								 CommandId cid, int options, struct BulkInsertStateData *bistate);
+	void		(*multi_insert) (TableModifyState *mstate,
+								 TupleTableSlot **slots, int nslots,
+								 CommandId cid, int options,
+								 struct BulkInsertStateData *bistate);
 
 	/* see table_tuple_delete() for reference about parameters */
-	TM_Result	(*tuple_delete) (Relation rel,
+	TM_Result	(*tuple_delete) (TableModifyState *mstate,
 								 ItemPointer tid,
 								 CommandId cid,
 								 Snapshot snapshot,
@@ -386,7 +403,7 @@ typedef struct TableAmRoutine
 								 bool changingPart);
 
 	/* see table_tuple_update() for reference about parameters */
-	TM_Result	(*tuple_update) (Relation rel,
+	TM_Result	(*tuple_update) (TableModifyState *mstate,
 								 ItemPointer otid,
 								 TupleTableSlot *slot,
 								 CommandId cid,
@@ -398,7 +415,7 @@ typedef struct TableAmRoutine
 								 bool *update_indexes);
 
 	/* see table_tuple_lock() for reference about parameters */
-	TM_Result	(*tuple_lock) (Relation rel,
+	TM_Result	(*tuple_lock) (TableModifyState *mstate,
 							   ItemPointer tid,
 							   Snapshot snapshot,
 							   TupleTableSlot *slot,
@@ -420,7 +437,7 @@ typedef struct TableAmRoutine
 	 *
 	 * Optional callback.
 	 */
-	void		(*finish_bulk_insert) (Relation rel, int options);
+	void		(*finish_bulk_insert) (TableModifyState *mstate, int options);
 
 
 	/* ------------------------------------------------------------------------
@@ -1116,6 +1133,31 @@ table_compute_xid_horizon_for_tuples(Relation rel,
  */
 
 /*
+ * Start Modification of table.
+ *
+ * This is called once before performing INSERT/DELETE/UPDATE, for a table.
+ * AM routine can perform initialization and setup common to perform
+ * tuple modification operations.
+ */
+static inline TableModifyState *
+table_begin_modify(Relation rel)
+{
+	return rel->rd_tableam->modify_begin(rel);
+}
+
+/*
+ * End Modification of table.
+ *
+ * This is called once after completing all INSERT/DELETE/UPDATE, for a table.
+ * AM routine can perform teardown of things setup by table_begin_modify.
+ */
+static inline void
+table_end_modify(TableModifyState *mstate)
+{
+	mstate->rel->rd_tableam->modify_end(mstate);
+}
+
+/*
  * Insert a tuple from a slot into table AM routine.
  *
  * The options bitmask allows the caller to specify options that may change the
@@ -1150,11 +1192,10 @@ table_compute_xid_horizon_for_tuples(Relation rel,
  * reflected in the slots contents.
  */
 static inline void
-table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
+table_tuple_insert(TableModifyState *mstate, TupleTableSlot *slot, CommandId cid,
 				   int options, struct BulkInsertStateData *bistate)
 {
-	rel->rd_tableam->tuple_insert(rel, slot, cid, options,
-								  bistate);
+	mstate->rel->rd_tableam->tuple_insert(mstate, slot, cid, options, bistate);
 }
 
 /*
@@ -1169,13 +1210,13 @@ table_tuple_insert(Relation rel, TupleTableSlot *slot, CommandId cid,
  * table_tuple_complete_speculative(succeeded = ...).
  */
 static inline void
-table_tuple_insert_speculative(Relation rel, TupleTableSlot *slot,
+table_tuple_insert_speculative(TableModifyState *mstate, TupleTableSlot *slot,
 							   CommandId cid, int options,
 							   struct BulkInsertStateData *bistate,
 							   uint32 specToken)
 {
-	rel->rd_tableam->tuple_insert_speculative(rel, slot, cid, options,
-											  bistate, specToken);
+	mstate->rel->rd_tableam->tuple_insert_speculative(mstate, slot, cid, options,
+													  bistate, specToken);
 }
 
 /*
@@ -1183,11 +1224,11 @@ table_tuple_insert_speculative(Relation rel, TupleTableSlot *slot,
  * succeeded is true, the tuple is fully inserted, if false, it's removed.
  */
 static inline void
-table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
+table_tuple_complete_speculative(TableModifyState *mstate, TupleTableSlot *slot,
 								 uint32 specToken, bool succeeded)
 {
-	rel->rd_tableam->tuple_complete_speculative(rel, slot, specToken,
-												succeeded);
+	mstate->rel->rd_tableam->tuple_complete_speculative(mstate, slot, specToken,
+														succeeded);
 }
 
 /*
@@ -1205,11 +1246,11 @@ table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
  * temporary context before calling this, if that's a problem.
  */
 static inline void
-table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
+table_multi_insert(TableModifyState *mstate, TupleTableSlot **slots, int nslots,
 				   CommandId cid, int options, struct BulkInsertStateData *bistate)
 {
-	rel->rd_tableam->multi_insert(rel, slots, nslots,
-								  cid, options, bistate);
+	mstate->rel->rd_tableam->multi_insert(mstate, slots, nslots,
+										  cid, options, bistate);
 }
 
 /*
@@ -1219,7 +1260,8 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * concurrent-update conditions.  Use simple_table_tuple_delete instead.
  *
  * Input parameters:
- *	relation - table to be modified (caller must hold suitable lock)
+ *	mstate - modify state containig table to be modified
+ *			 (caller must hold suitable lock)
  *	tid - TID of tuple to be deleted
  *	cid - delete command ID (used for visibility test, and stored into
  *		cmax if successful)
@@ -1239,13 +1281,13 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * struct TM_FailureData for additional info.
  */
 static inline TM_Result
-table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
+table_tuple_delete(TableModifyState *mstate, ItemPointer tid, CommandId cid,
 				   Snapshot snapshot, Snapshot crosscheck, bool wait,
 				   TM_FailureData *tmfd, bool changingPart)
 {
-	return rel->rd_tableam->tuple_delete(rel, tid, cid,
-										 snapshot, crosscheck,
-										 wait, tmfd, changingPart);
+	return mstate->rel->rd_tableam->tuple_delete(mstate, tid, cid,
+												 snapshot, crosscheck,
+												 wait, tmfd, changingPart);
 }
 
 /*
@@ -1255,7 +1297,8 @@ table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
  * concurrent-update conditions.  Use simple_table_tuple_update instead.
  *
  * Input parameters:
- *	relation - table to be modified (caller must hold suitable lock)
+ *	mstate - modify state containig table to be modified
+ *			 (caller must hold suitable lock)
  *	otid - TID of old tuple to be replaced
  *	slot - newly constructed tuple data to store
  *	cid - update command ID (used for visibility test, and stored into
@@ -1283,22 +1326,23 @@ table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,
  * for additional info.
  */
 static inline TM_Result
-table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
-				   CommandId cid, Snapshot snapshot, Snapshot crosscheck,
-				   bool wait, TM_FailureData *tmfd, LockTupleMode *lockmode,
-				   bool *update_indexes)
+table_tuple_update(TableModifyState *mstate, ItemPointer otid,
+				   TupleTableSlot *slot, CommandId cid, Snapshot snapshot,
+				   Snapshot crosscheck, bool wait, TM_FailureData *tmfd,
+				   LockTupleMode *lockmode, bool *update_indexes)
 {
-	return rel->rd_tableam->tuple_update(rel, otid, slot,
-										 cid, snapshot, crosscheck,
-										 wait, tmfd,
-										 lockmode, update_indexes);
+	return mstate->rel->rd_tableam->tuple_update(mstate, otid, slot,
+												 cid, snapshot, crosscheck,
+												 wait, tmfd,
+												 lockmode, update_indexes);
 }
 
 /*
  * Lock a tuple in the specified mode.
  *
  * Input parameters:
- *	relation: relation containing tuple (caller must hold suitable lock)
+ *	mstate - modify state containig table to be modified
+ *			 (caller must hold suitable lock)
  *	tid: TID of tuple to lock
  *	snapshot: snapshot to use for visibility determinations
  *	cid: current command ID (used for visibility test, and stored into
@@ -1328,14 +1372,14 @@ table_tuple_update(Relation rel, ItemPointer otid, TupleTableSlot *slot,
  * comments for struct TM_FailureData for additional info.
  */
 static inline TM_Result
-table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
+table_tuple_lock(TableModifyState *mstate, ItemPointer tid, Snapshot snapshot,
 				 TupleTableSlot *slot, CommandId cid, LockTupleMode mode,
 				 LockWaitPolicy wait_policy, uint8 flags,
 				 TM_FailureData *tmfd)
 {
-	return rel->rd_tableam->tuple_lock(rel, tid, snapshot, slot,
-									   cid, mode, wait_policy,
-									   flags, tmfd);
+	return mstate->rel->rd_tableam->tuple_lock(mstate, tid, snapshot, slot,
+											   cid, mode, wait_policy,
+											   flags, tmfd);
 }
 
 /*
@@ -1343,11 +1387,11 @@ table_tuple_lock(Relation rel, ItemPointer tid, Snapshot snapshot,
  * tuple_insert and multi_insert with a BulkInsertState specified.
  */
 static inline void
-table_finish_bulk_insert(Relation rel, int options)
+table_finish_bulk_insert(TableModifyState *mstate, int options)
 {
 	/* optional callback */
-	if (rel->rd_tableam && rel->rd_tableam->finish_bulk_insert)
-		rel->rd_tableam->finish_bulk_insert(rel, options);
+	if (mstate->rel->rd_tableam && mstate->rel->rd_tableam->finish_bulk_insert)
+		mstate->rel->rd_tableam->finish_bulk_insert(mstate, options);
 }
 
 
@@ -1774,10 +1818,11 @@ table_scan_sample_next_tuple(TableScanDesc scan,
  * ----------------------------------------------------------------------------
  */
 
-extern void simple_table_tuple_insert(Relation rel, TupleTableSlot *slot);
-extern void simple_table_tuple_delete(Relation rel, ItemPointer tid,
+extern void simple_table_tuple_insert(TableModifyState *mstate,
+									  TupleTableSlot *slot);
+extern void simple_table_tuple_delete(TableModifyState *mstate, ItemPointer tid,
 									  Snapshot snapshot);
-extern void simple_table_tuple_update(Relation rel, ItemPointer otid,
+extern void simple_table_tuple_update(TableModifyState *mstate, ItemPointer otid,
 									  TupleTableSlot *slot, Snapshot snapshot,
 									  bool *update_indexes);
 

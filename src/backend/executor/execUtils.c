@@ -190,6 +190,9 @@ CreateExecutorState(void)
 void
 FreeExecutorState(EState *estate)
 {
+	if (estate->es_result_relation_info)
+		ResultRelEndModify(estate->es_result_relation_info);
+
 	/*
 	 * Shut down and free any remaining ExprContexts.  We do this explicitly
 	 * to ensure that any remaining shutdown callbacks get called (since they

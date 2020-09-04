@@ -262,9 +262,9 @@ table_tuple_get_latest_tid(TableScanDesc scan, ItemPointer tid)
  * default command ID and not allowing access to the speedup options.
  */
 void
-simple_table_tuple_insert(Relation rel, TupleTableSlot *slot)
+simple_table_tuple_insert(TableModifyState *mstate, TupleTableSlot *slot)
 {
-	table_tuple_insert(rel, slot, GetCurrentCommandId(true), 0, NULL);
+	table_tuple_insert(mstate, slot, GetCurrentCommandId(true), 0, NULL);
 }
 
 /*
@@ -276,12 +276,13 @@ simple_table_tuple_insert(Relation rel, TupleTableSlot *slot)
  * via ereport().
  */
 void
-simple_table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot)
+simple_table_tuple_delete(TableModifyState *mstate, ItemPointer tid,
+						  Snapshot snapshot)
 {
 	TM_Result	result;
 	TM_FailureData tmfd;
 
-	result = table_tuple_delete(rel, tid,
+	result = table_tuple_delete(mstate, tid,
 								GetCurrentCommandId(true),
 								snapshot, InvalidSnapshot,
 								true /* wait for commit */ ,
@@ -321,7 +322,7 @@ simple_table_tuple_delete(Relation rel, ItemPointer tid, Snapshot snapshot)
  * via ereport().
  */
 void
-simple_table_tuple_update(Relation rel, ItemPointer otid,
+simple_table_tuple_update(TableModifyState *mstate, ItemPointer otid,
 						  TupleTableSlot *slot,
 						  Snapshot snapshot,
 						  bool *update_indexes)
@@ -330,7 +331,7 @@ simple_table_tuple_update(Relation rel, ItemPointer otid,
 	TM_FailureData tmfd;
 	LockTupleMode lockmode;
 
-	result = table_tuple_update(rel, otid, slot,
+	result = table_tuple_update(mstate, otid, slot,
 								GetCurrentCommandId(true),
 								snapshot, InvalidSnapshot,
 								true /* wait for commit */ ,

@@ -955,6 +955,7 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 
 			erm = (ExecRowMark *) palloc(sizeof(ExecRowMark));
 			erm->relation = relation;
+			erm->mstate = table_begin_modify(relation);
 			erm->relid = relid;
 			erm->rti = rc->rti;
 			erm->prti = rc->prti;
@@ -1325,6 +1326,7 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->ri_ReturningSlot = NULL;
 	resultRelInfo->ri_TrigOldSlot = NULL;
 	resultRelInfo->ri_TrigNewSlot = NULL;
+	resultRelInfo->ri_ModifyState = NULL;
 
 	/*
 	 * Partition constraint, which also includes the partition constraint of
@@ -1345,6 +1347,32 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->ri_PartitionRoot = partition_root;
 	resultRelInfo->ri_PartitionInfo = NULL; /* may be set later */
 	resultRelInfo->ri_CopyMultiInsertBuffer = NULL;
+}
+
+
+/*
+ * Initialized modiy state if not initialized
+ *
+ * Callers must call `ResultRelEndModify` to close modify state,
+ * initialized by this function.
+ */
+void
+ResultRelInitModifyState(ResultRelInfo *resultRelInfo)
+{
+	/* FDW's cannot have table am routine */
+	AssertState(resultRelInfo->ri_FdwRoutine == NULL);
+
+	if (!resultRelInfo->ri_ModifyState)
+		resultRelInfo->ri_ModifyState =
+			table_begin_modify(resultRelInfo->ri_RelationDesc);
+}
+
+/* Close Modify State initialized by `ResultRelGetModifyState` */
+void
+ResultRelEndModify(ResultRelInfo *resultRelInfo)
+{
+	if (resultRelInfo->ri_ModifyState)
+		table_end_modify(resultRelInfo->ri_ModifyState);
 }
 
 /*
